@@ -19,11 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Auction_Bid_FullMethodName                   = "/auction.Auction/Bid"
-	Auction_Result_FullMethodName                = "/auction.Auction/Result"
-	Auction_CallElection_FullMethodName          = "/auction.Auction/CallElection"
-	Auction_AssertCoordinator_FullMethodName     = "/auction.Auction/AssertCoordinator"
-	Auction_RequestResourceAccess_FullMethodName = "/auction.Auction/RequestResourceAccess"
+	Auction_Bid_FullMethodName               = "/auction.Auction/Bid"
+	Auction_Result_FullMethodName            = "/auction.Auction/Result"
+	Auction_CallElection_FullMethodName      = "/auction.Auction/CallElection"
+	Auction_AssertCoordinator_FullMethodName = "/auction.Auction/AssertCoordinator"
 )
 
 // AuctionClient is the client API for Auction service.
@@ -34,7 +33,6 @@ type AuctionClient interface {
 	Result(ctx context.Context, in *RequestResultMessage, opts ...grpc.CallOption) (*ResultResponseMessage, error)
 	CallElection(ctx context.Context, in *CallElectionMessage, opts ...grpc.CallOption) (*CallElectionResponseMessage, error)
 	AssertCoordinator(ctx context.Context, in *AssertCoordinatorMessage, opts ...grpc.CallOption) (*AssertCoordinatorResponseMessage, error)
-	RequestResourceAccess(ctx context.Context, in *ResourceRequestMessage, opts ...grpc.CallOption) (*ResourceRequestResponse, error)
 }
 
 type auctionClient struct {
@@ -81,15 +79,6 @@ func (c *auctionClient) AssertCoordinator(ctx context.Context, in *AssertCoordin
 	return out, nil
 }
 
-func (c *auctionClient) RequestResourceAccess(ctx context.Context, in *ResourceRequestMessage, opts ...grpc.CallOption) (*ResourceRequestResponse, error) {
-	out := new(ResourceRequestResponse)
-	err := c.cc.Invoke(ctx, Auction_RequestResourceAccess_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // AuctionServer is the server API for Auction service.
 // All implementations must embed UnimplementedAuctionServer
 // for forward compatibility
@@ -98,7 +87,6 @@ type AuctionServer interface {
 	Result(context.Context, *RequestResultMessage) (*ResultResponseMessage, error)
 	CallElection(context.Context, *CallElectionMessage) (*CallElectionResponseMessage, error)
 	AssertCoordinator(context.Context, *AssertCoordinatorMessage) (*AssertCoordinatorResponseMessage, error)
-	RequestResourceAccess(context.Context, *ResourceRequestMessage) (*ResourceRequestResponse, error)
 	mustEmbedUnimplementedAuctionServer()
 }
 
@@ -117,9 +105,6 @@ func (UnimplementedAuctionServer) CallElection(context.Context, *CallElectionMes
 }
 func (UnimplementedAuctionServer) AssertCoordinator(context.Context, *AssertCoordinatorMessage) (*AssertCoordinatorResponseMessage, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AssertCoordinator not implemented")
-}
-func (UnimplementedAuctionServer) RequestResourceAccess(context.Context, *ResourceRequestMessage) (*ResourceRequestResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RequestResourceAccess not implemented")
 }
 func (UnimplementedAuctionServer) mustEmbedUnimplementedAuctionServer() {}
 
@@ -206,24 +191,6 @@ func _Auction_AssertCoordinator_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Auction_RequestResourceAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ResourceRequestMessage)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AuctionServer).RequestResourceAccess(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Auction_RequestResourceAccess_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AuctionServer).RequestResourceAccess(ctx, req.(*ResourceRequestMessage))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // Auction_ServiceDesc is the grpc.ServiceDesc for Auction service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -246,10 +213,6 @@ var Auction_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AssertCoordinator",
 			Handler:    _Auction_AssertCoordinator_Handler,
-		},
-		{
-			MethodName: "RequestResourceAccess",
-			Handler:    _Auction_RequestResourceAccess_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -16,12 +16,15 @@ import (
 
 type Server struct {
 	pb.UnimplementedAuctionServer
-	address               string
-	port                  string
-	initial_port          string
-	client_array_size_int int
-	coordinator           string
-	IsCoordinator         bool
+	address                string
+	port                   string
+	initial_port           string
+	client_array_size_int  int
+	coordinator            string
+	IsCoordinator          bool
+	bidders_to_highest_bid map[int]int
+	highest_bid            int
+	highest_bidder         int
 }
 
 var server_array_size = flag.String("serverArraySize", "", "Max size of the server array")
@@ -35,11 +38,13 @@ func main() {
 	port := FindAvailablePort(GetOutboundIP(), client_array_size_int, initial_port)
 
 	client := &Server{
-		address:               client_IP,
-		port:                  port,
-		initial_port:          strconv.Itoa(initial_port),
-		client_array_size_int: client_array_size_int,
-		IsCoordinator:         false,
+		address:                client_IP,
+		port:                   port,
+		initial_port:           strconv.Itoa(initial_port),
+		client_array_size_int:  client_array_size_int,
+		IsCoordinator:          false,
+		bidders_to_highest_bid: map[int]int{},
+		highest_bid:            0,
 	}
 
 	grpcServer := grpc.NewServer()
@@ -57,10 +62,139 @@ func main() {
 }
 
 func RunProgram(server *Server) {
-	log.Println("Calling election, coordinator before election: " + server.coordinator)
+	log.Print("Joining in, calling election")
 	server.CallElection(context.Background(), &pb.CallElectionMessage{})
-	log.Println("Coordinator after election: " + server.coordinator)
 }
+
+func (server *Server) Bid(ctx context.Context, send_bid_message *pb.SendBidMessage) (*pb.ResponseBidMessage, error) {
+	if server.IsCoordinator {
+		log.Print("Server is coordinator, and recieved bid")
+		log.Printf("%v : %v", server.highest_bid, send_bid_message.Bid)
+		_, exists := server.bidders_to_highest_bid[int(send_bid_message.UniqueIdentifier)]
+		if exists && int(send_bid_message.Bid) > server.highest_bid { // If the bidder is already registrered and the bid is valid
+			log.Print("The bidder is already registrered and the bid is valid")
+			updated_successfully := HandleValidBid(server, send_bid_message) // Handles the bid, returns true if atleast one other node was updated
+			if updated_successfully {
+				return &pb.ResponseBidMessage{ // Returns success to the bidder
+					Status: "Success",
+				}, nil
+			}
+			return &pb.ResponseBidMessage{ // Returns failure, because the system could not update
+				Status: "Failure",
+			}, nil
+		} else if !exists && int(send_bid_message.Bid) > server.highest_bid { // If the bidder is not registrered but the bid is valid
+			log.Print("The bidder is not registrered but the bid is valid")
+			RegisterNewBidder(server, send_bid_message)
+			updated_successfully := HandleValidBid(server, send_bid_message) // Handles the bid, returns true if atleast one other node was updated
+			if updated_successfully {
+				return &pb.ResponseBidMessage{ // Returns success to the bidder
+					Status: "Success",
+				}, nil
+			} else {
+				log.Printf("No replcias to update, system is not secure")
+				return &pb.ResponseBidMessage{
+					Status: "Failure",
+				}, nil
+			}
+		} else if int(send_bid_message.Bid) <= server.highest_bid { // Bid is invalid
+			log.Print("Recieved invalid bid")
+			return &pb.ResponseBidMessage{
+				Status: "Failure",
+			}, nil
+		}
+	} else if send_bid_message.FromCoordinator { // If the bid call came from the coordiantor, it is an update
+		log.Print("Server is updating")
+		updated_successfully := HandleUpdate(server, send_bid_message) // Handles the update
+		if updated_successfully {
+			return &pb.ResponseBidMessage{ // Returns success to the coordinator
+				Status: "Success",
+			}, nil
+		}
+		return &pb.ResponseBidMessage{ // Returns failure, because the node could not update
+			Status: "Failure",
+		}, nil
+	}
+	// If the node is not the coordinator (leader) the request is fowarded to the coordinator
+	log.Print("Tshe node is not the coordinator (leader) the request is fowarded to the coordinator")
+	server_address := server.address + ":" + server.coordinator
+	connection, _ := grpc.Dial(server_address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	grpc_client := pb.NewAuctionClient(connection)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	coordinator_repsonse, err := grpc_client.Bid(ctx, send_bid_message)
+	if err != nil {
+		server.CallElection(context.Background(), &pb.CallElectionMessage{})
+	}
+	return coordinator_repsonse, nil
+}
+
+func (server *Server) Result(ctx context.Context, request_result_message *pb.RequestResultMessage) (*pb.ResultResponseMessage, error) {
+	if server.IsCoordinator {
+		return &pb.ResultResponseMessage{
+			Result: int64(server.highest_bid),
+		}, nil
+	}
+	log.Print("Tshe node is not the coordinator (leader) the request is fowarded to the coordinator")
+	server_address := server.address + ":" + server.coordinator
+	connection, _ := grpc.Dial(server_address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	grpc_client := pb.NewAuctionClient(connection)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	coordinator_repsonse, err := grpc_client.Result(ctx, request_result_message)
+	if err != nil {
+		server.CallElection(context.Background(), &pb.CallElectionMessage{})
+	}
+	return coordinator_repsonse, nil
+}
+
+func HandleValidBid(server *Server, send_bid_message *pb.SendBidMessage) bool {
+	server.highest_bid = int(send_bid_message.Bid)
+	server.highest_bidder = int(send_bid_message.UniqueIdentifier)
+	one_or_more_updated_sucessfully := UpdateReplicas(server, send_bid_message)
+	return one_or_more_updated_sucessfully
+}
+
+func HandleUpdate(server *Server, send_bid_message *pb.SendBidMessage) bool {
+	server.highest_bid = int(send_bid_message.Bid)
+	server.highest_bidder = int(send_bid_message.UniqueIdentifier)
+	return true
+}
+
+func UpdateReplicas(server *Server, send_bid_message *pb.SendBidMessage) bool {
+	log.Print("Updating replicas")
+	one_or_more_updated_sucessfully := false
+	server_port, _ := strconv.Atoi(server.port)
+	initial_port, _ := strconv.Atoi(server.initial_port)
+	max_port := initial_port + server.client_array_size_int
+	for i := initial_port; i < max_port; i++ {
+		if i != server_port {
+			port := strconv.Itoa(i)
+			server_address := server.address + ":" + port
+			connection, _ := grpc.Dial(server_address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			grpc_client := pb.NewAuctionClient(connection)
+			ctx, _ := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			response, _ := grpc_client.Bid(ctx, &pb.SendBidMessage{
+				UniqueIdentifier: send_bid_message.UniqueIdentifier,
+				Bid:              send_bid_message.Bid,
+				FromCoordinator:  true,
+			})
+			if response != nil && response.Status == "Success" {
+				log.Print("Made an successful update")
+				one_or_more_updated_sucessfully = true
+			}
+		}
+	}
+	return one_or_more_updated_sucessfully
+}
+
+func RegisterNewBidder(server *Server, send_bid_message *pb.SendBidMessage) {
+	server.bidders_to_highest_bid[int(send_bid_message.UniqueIdentifier)] = int(send_bid_message.Bid)
+}
+
+/*-------------------------------------------------------------------
+ELECTION CODE FROM HANDIN 4
+--------------------------------------------------------------------*/
+
 func (client *Server) CallElection(context context.Context, call_election_message *pb.CallElectionMessage) (*pb.CallElectionResponseMessage, error) {
 	log.Print("Election called!")
 
@@ -113,7 +247,10 @@ func SendCoordinator(server *Server, address string, port string) {
 	server.IsCoordinator = true
 	log.Printf("Telling my subjects I'm the boss around here, subject: " + port)
 	server_address := address + ":" + port
-	connection, _ := grpc.Dial(server_address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	connection, err := grpc.Dial(server_address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Printf("Failed to dial %s: %v", server_address, err)
+	}
 	grpc_client := pb.NewAuctionClient(connection)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
