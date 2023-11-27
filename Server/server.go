@@ -25,6 +25,8 @@ type Server struct {
 	bidders_to_highest_bid map[int]int
 	highest_bid            int
 	highest_bidder         int
+	auction_end            int
+	is_first_bid           bool
 }
 
 var server_array_size = flag.String("serverArraySize", "", "Max size of the server array")
@@ -45,6 +47,7 @@ func main() {
 		IsCoordinator:          false,
 		bidders_to_highest_bid: map[int]int{},
 		highest_bid:            0,
+		is_first_bid:           true,
 	}
 
 	grpcServer := grpc.NewServer()
@@ -57,7 +60,7 @@ func main() {
 
 	// Starting acting
 	go RunProgram(client)
-	time.Sleep(1 * time.Minute)
+	time.Sleep(10 * time.Minute)
 
 }
 
@@ -67,55 +70,69 @@ func RunProgram(server *Server) {
 }
 
 func (server *Server) Bid(ctx context.Context, send_bid_message *pb.SendBidMessage) (*pb.ResponseBidMessage, error) {
-	if server.IsCoordinator {
-		log.Print("Server is coordinator, and recieved bid")
-		log.Printf("%v : %v", server.highest_bid, send_bid_message.Bid)
-		_, exists := server.bidders_to_highest_bid[int(send_bid_message.UniqueIdentifier)]
-		if exists && int(send_bid_message.Bid) > server.highest_bid { // If the bidder is already registrered and the bid is valid
-			log.Print("The bidder is already registrered and the bid is valid")
-			updated_successfully := HandleValidBid(server, send_bid_message) // Handles the bid, returns true if atleast one other node was updated
-			if updated_successfully {
-				return &pb.ResponseBidMessage{ // Returns success to the bidder
-					Status: "Success",
-				}, nil
+	auction_not_over := time.Now().Unix() < int64(server.auction_end) || server.is_first_bid
+	log.Print(auction_not_over)
+	if auction_not_over {
+		if server.IsCoordinator {
+			if server.is_first_bid {
+				server.is_first_bid = false
+				server.auction_end = int(time.Now().Unix()) + 30
+				end_time := time.Unix(int64(server.auction_end), 0).String()
+				log.Printf("Auction started, ending %v", end_time)
 			}
-			return &pb.ResponseBidMessage{ // Returns failure, because the system could not update
-				Status: "Failure",
-			}, nil
-		} else if !exists && int(send_bid_message.Bid) > server.highest_bid { // If the bidder is not registrered but the bid is valid
-			log.Print("The bidder is not registrered but the bid is valid")
-			RegisterNewBidder(server, send_bid_message)
-			updated_successfully := HandleValidBid(server, send_bid_message) // Handles the bid, returns true if atleast one other node was updated
-			if updated_successfully {
-				return &pb.ResponseBidMessage{ // Returns success to the bidder
-					Status: "Success",
-				}, nil
-			} else {
-				log.Printf("No replcias to update, system is not secure")
-				return &pb.ResponseBidMessage{
+			log.Print("Server is coordinator, and recieved bid")
+			_, exists := server.bidders_to_highest_bid[int(send_bid_message.UniqueIdentifier)]
+			if exists && int(send_bid_message.Bid) > server.highest_bid { // If the bidder is already registrered and the bid is valid
+				log.Print("The bidder is already registrered and the bid is valid")
+				updated_successfully := HandleValidBid(server, send_bid_message) // Handles the bid, returns true if atleast one other node was updated
+				if updated_successfully {
+					return &pb.ResponseBidMessage{ // Returns success to the bidder
+						Status: "Success",
+					}, nil
+				}
+				return &pb.ResponseBidMessage{ // Returns failure, because the system could not update
 					Status: "Exception",
 				}, nil
+			} else if !exists && int(send_bid_message.Bid) > server.highest_bid { // If the bidder is not registrered but the bid is valid
+				log.Print("The bidder is not registrered but the bid is valid")
+				RegisterNewBidder(server, send_bid_message)
+				updated_successfully := HandleValidBid(server, send_bid_message) // Handles the bid, returns true if atleast one other node was updated
+				if updated_successfully {
+					return &pb.ResponseBidMessage{ // Returns success to the bidder
+						Status: "Success",
+					}, nil
+				} else {
+					log.Printf("No replcias to update, system is not secure")
+					return &pb.ResponseBidMessage{
+						Status: "Exception",
+					}, nil
+				}
+			} else if int(send_bid_message.Bid) <= server.highest_bid { // Bid is invalid
+				log.Print("Recieved invalid bid")
+				return &pb.ResponseBidMessage{
+					Status: "Failure",
+				}, nil
 			}
-		} else if int(send_bid_message.Bid) <= server.highest_bid { // Bid is invalid
-			log.Print("Recieved invalid bid")
-			return &pb.ResponseBidMessage{
-				Status: "Failure",
+		} else if send_bid_message.FromCoordinator { // If the bid call came from the coordiantor, it is an update
+			log.Print("Server is updating")
+			updated_successfully := HandleUpdate(server, send_bid_message) // Handles the update
+			if updated_successfully {
+				return &pb.ResponseBidMessage{ // Returns success to the coordinator
+					Status: "Success",
+				}, nil
+			}
+			return &pb.ResponseBidMessage{ // Returns failure, because the node could not update
+				Status: "Exception",
 			}, nil
 		}
-	} else if send_bid_message.FromCoordinator { // If the bid call came from the coordiantor, it is an update
-		log.Print("Server is updating")
-		updated_successfully := HandleUpdate(server, send_bid_message) // Handles the update
-		if updated_successfully {
-			return &pb.ResponseBidMessage{ // Returns success to the coordinator
-				Status: "Success",
-			}, nil
-		}
-		return &pb.ResponseBidMessage{ // Returns failure, because the node could not update
-			Status: "Exception",
+	} else if !auction_not_over {
+		log.Print("Auction over bro")
+		return &pb.ResponseBidMessage{
+			Status: "Failure",
 		}, nil
 	}
 	// If the node is not the coordinator (leader) the request is fowarded to the coordinator
-	log.Print("Tshe node is not the coordinator (leader) the request is fowarded to the coordinator")
+	log.Print("The node is not the coordinator (leader) the request is fowarded to the coordinator")
 	server_address := server.address + ":" + server.coordinator
 	connection, _ := grpc.Dial(server_address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	grpc_client := pb.NewAuctionClient(connection)
@@ -131,10 +148,11 @@ func (server *Server) Bid(ctx context.Context, send_bid_message *pb.SendBidMessa
 func (server *Server) Result(ctx context.Context, request_result_message *pb.RequestResultMessage) (*pb.ResultResponseMessage, error) {
 	if server.IsCoordinator {
 		return &pb.ResultResponseMessage{
-			Result: int64(server.highest_bid),
+			Result:               int64(server.highest_bid),
+			CurrentHighestBidder: int64(server.highest_bidder),
 		}, nil
 	}
-	log.Print("Tshe node is not the coordinator (leader) the request is fowarded to the coordinator")
+	log.Print("The node is not the coordinator (leader) the request is fowarded to the coordinator")
 	server_address := server.address + ":" + server.coordinator
 	connection, _ := grpc.Dial(server_address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	grpc_client := pb.NewAuctionClient(connection)
@@ -157,6 +175,8 @@ func HandleValidBid(server *Server, send_bid_message *pb.SendBidMessage) bool {
 func HandleUpdate(server *Server, send_bid_message *pb.SendBidMessage) bool {
 	server.highest_bid = int(send_bid_message.Bid)
 	server.highest_bidder = int(send_bid_message.UniqueIdentifier)
+	server.is_first_bid = send_bid_message.IsFirstBid
+	server.auction_end = int(send_bid_message.EndTime)
 	return true
 }
 
@@ -178,6 +198,8 @@ func UpdateReplicas(server *Server, send_bid_message *pb.SendBidMessage) bool {
 				UniqueIdentifier: send_bid_message.UniqueIdentifier,
 				Bid:              send_bid_message.Bid,
 				FromCoordinator:  true,
+				EndTime:          int64(server.auction_end),
+				IsFirstBid:       false,
 			})
 			if response != nil && response.Status == "Success" {
 				log.Print("Made an successful update")

@@ -24,6 +24,8 @@ message SendBidMessage {
     int64 unique_identifier = 1;
     int64 bid = 2;
     bool from_coordinator = 3;
+    int64 end_time = 4;
+    bool is_first_bid = 5;
 }
 
 message ResponseBidMessage {
@@ -36,6 +38,7 @@ message RequestResultMessage {
 
 message ResultResponseMessage {
     int64 result = 1;
+    int64 current_highest_bidder = 2;
 }
 
 

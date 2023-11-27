@@ -83,6 +83,7 @@ func SendBid(value int, client *Client) {
 	})
 
 	if err != nil {
+		log.Printf("Some error this is %v", err)
 		client.grpc_client = GetClientFromConnection(ConnectToServer(*sAddress)) // The "interface" node crashed, finding new node
 		SendBid(value, client)
 	} else if response.Status == "Success" {
@@ -105,7 +106,8 @@ func GetResult(client *Client) {
 		client.grpc_client = GetClientFromConnection(ConnectToServer(*sAddress)) // The "interface" node crashed, finding new node
 		GetResult(client)
 	} else {
-		log.Printf("Highest bid: %v", response.Result)
+		am_i_highest := client.unique_identifier == response.CurrentHighestBidder
+		log.Printf("Highest bid: %v \n Highest bidder is: %v \n Is it me? %v", response.Result, response.CurrentHighestBidder, am_i_highest)
 	}
 }
 
