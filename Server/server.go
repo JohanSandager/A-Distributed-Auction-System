@@ -93,7 +93,7 @@ func (server *Server) Bid(ctx context.Context, send_bid_message *pb.SendBidMessa
 			} else {
 				log.Printf("No replcias to update, system is not secure")
 				return &pb.ResponseBidMessage{
-					Status: "Failure",
+					Status: "Exception",
 				}, nil
 			}
 		} else if int(send_bid_message.Bid) <= server.highest_bid { // Bid is invalid
@@ -111,7 +111,7 @@ func (server *Server) Bid(ctx context.Context, send_bid_message *pb.SendBidMessa
 			}, nil
 		}
 		return &pb.ResponseBidMessage{ // Returns failure, because the node could not update
-			Status: "Failure",
+			Status: "Exception",
 		}, nil
 	}
 	// If the node is not the coordinator (leader) the request is fowarded to the coordinator
@@ -172,7 +172,8 @@ func UpdateReplicas(server *Server, send_bid_message *pb.SendBidMessage) bool {
 			server_address := server.address + ":" + port
 			connection, _ := grpc.Dial(server_address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			grpc_client := pb.NewAuctionClient(connection)
-			ctx, _ := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
 			response, _ := grpc_client.Bid(ctx, &pb.SendBidMessage{
 				UniqueIdentifier: send_bid_message.UniqueIdentifier,
 				Bid:              send_bid_message.Bid,

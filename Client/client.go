@@ -37,6 +37,7 @@ func main() {
 
 func RunProgram(client *Client) {
 	scanner := bufio.NewScanner(os.Stdin)
+	log.Print("Ready to take bid:")
 
 	for scanner.Scan() {
 		input_text := scanner.Text()
@@ -86,6 +87,8 @@ func SendBid(value int, client *Client) {
 	} else if response.Status == "Success" {
 		log.Printf("The bid of %v was successfull", value)
 	} else if response.Status == "Failure" {
+		log.Printf("The bid of %v was not successfull, due to invalid bid", value)
+	} else if response.Status == "Exception" {
 		log.Printf("The bid of %v was not successfull, due to system failure", value)
 	} else {
 		log.Fatalf("ERROR")
