@@ -76,7 +76,7 @@ func (server *Server) Bid(ctx context.Context, send_bid_message *pb.SendBidMessa
 		if server.IsCoordinator {
 			if server.is_first_bid {
 				server.is_first_bid = false
-				server.auction_end = int(time.Now().Unix()) + 30
+				server.auction_end = int(time.Now().Unix()) + 100
 				end_time := time.Unix(int64(server.auction_end), 0).String()
 				log.Printf("Auction started, ending %v", end_time)
 			}
