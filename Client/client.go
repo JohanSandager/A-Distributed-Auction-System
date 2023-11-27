@@ -75,7 +75,8 @@ func GetClientFromConnection(connection *grpc.ClientConn) pb.AuctionClient {
 }
 
 func SendBid(value int, client *Client) {
-	ctx, _ := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
 	response, err := client.grpc_client.Bid(ctx, &pb.SendBidMessage{
 		UniqueIdentifier: client.unique_identifier,
 		Bid:              int64(value),
@@ -96,7 +97,8 @@ func SendBid(value int, client *Client) {
 }
 
 func GetResult(client *Client) {
-	ctx, _ := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
 	response, err := client.grpc_client.Result(ctx, &pb.RequestResultMessage{})
 
 	if err != nil {
